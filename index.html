@@ -93,13 +93,13 @@
 
 <div id="main">
   <div id="topbar">
-    <label for="modelSelect">OpenRouter 免費模型：</label>
-    <!-- 💡 修改點 1：將 Model 選項改為 OpenRouter 免費模型標籤 -->
-   <select id="modelSelect" onchange="changeModel()">
-  <option value="openrouter/free" selected>Auto Free (OpenRouter 自動分配)</option> 
-  <option value="nvidia/nemotron-3-super-120b-a12b:free">NVIDIA Nemotron 3 120B</option>
-  <option value="google/gemma-4-31b-it:free">Google Gemma 4 31B</option>
-  <option value="cohere/north-mini-code:free">Cohere North Mini Code</option>
+    <label for="modelSelect">AI Model：</label>
+    <select id="modelSelect" onchange="changeModel()">
+  <option value="auto" selected>Auto (智能自動分流)</option>
+  <option value="gemini-2.5-flash">Google Gemini 2.5 Flash (長文本)</option>
+  <option value="cerebras-llama3.3-70b">Cerebras Llama 3.3 70B (超高速/邏輯)</option>
+  <option value="mistral-small-latest">Mistral Small (語言寫作/翻譯)</option>
+  
 </select>
   </div>
   <div id="messages"></div>
