@@ -96,11 +96,12 @@
     <label for="modelSelect">OpenRouter 免費模型：</label>
     <!-- 💡 修改點 1：將 Model 選項改為 OpenRouter 免費模型標籤 -->
     <select id="modelSelect" onchange="changeModel()">
-      <option value="google/gemini-2.5-flash:free" selected>Gemini 2.5 Flash Free</option> 
-      <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B Free</option>
-      <option value="deepseek/deepseek-r1:free">DeepSeek R1 Free</option>
-      <option value="qwen/qwen-2.5-coder-32b-instruct:free">Qwen 2.5 Coder 32B Free</option>
-    </select>
+  <!-- 💡 在這裏加上 selected 屬性 -->
+  <option value="google/gemini-2.5-flash:free" selected>Gemini 2.5 Flash Free</option> 
+  <option value="meta-llama/llama-3.3-70b-instruct:free">Llama 3.3 70B Free</option>
+  <option value="deepseek/deepseek-r1:free">DeepSeek R1 Free</option>
+  <option value="qwen/qwen-2.5-coder-32b-instruct:free">Qwen 2.5 Coder 32B Free</option>
+</select>
   </div>
   <div id="messages"></div>
   <div id="inputBar">
