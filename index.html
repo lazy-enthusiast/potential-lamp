@@ -94,12 +94,11 @@
 <div id="main">
   <div id="topbar">
     <label for="modelSelect">AI Model：</label>
-    <select id="modelSelect" onchange="changeModel()">
-  <option value="auto" selected>Auto (智能自動分流)</option>
-  <option value="gemini-2.5-flash">Google Gemini 2.5 Flash (長文本)</option>
-  <option value="cerebras-llama3.3-70b">Cerebras Llama 3.3 70B (超高速/邏輯)</option>
-  <option value="mistral-small-latest">Mistral Small (語言寫作/翻譯)</option>
-  
+<select id="modelSelect" onchange="changeModel()">
+  <option value="gemini-3.6-flash" selected>Google Gemini 3.6 Flash (預設/長文本)</option>
+  <option value="cerebras-llama4-scout">Cerebras Llama 4 Scout (極速/邏輯)</option>
+  <option value="mistral-small-latest">Mistral Open-Nemo (語言寫作/翻譯)</option>
+  <option value="auto">Auto (智能自動分流)</option>
 </select>
   </div>
   <div id="messages"></div>
