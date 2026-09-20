@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Free AI Chatbot</title>
+<title>Claude Chatbot</title>
 
 <!-- 第三方套件：marked & purify -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
@@ -95,10 +95,11 @@
   <div id="topbar">
     <label for="modelSelect">AI Model：</label>
 <select id="modelSelect" onchange="changeModel()">
-  <option value="gemini-3.6-flash" selected>Google Gemini 3.6 Flash (預設/長文本)</option>
-  <option value="cerebras-llama4-scout">Cerebras Llama 4 Scout (極速/邏輯)</option>
-  <option value="mistral-small-latest">Mistral Open-Nemo (語言寫作/翻譯)</option>
-  <option value="auto">Auto (智能自動分流)</option>
+  <option value="auto" selected>自動（依複雜度智能分流）</option>
+  <option value="Haiku-4.5">Claude Haiku 4.5（快速/簡單任務）</option>
+  <option value="Sonnet-5">Claude Sonnet 5（標準任務）</option>
+  <option value="Opus-5">Claude Opus 5（進階分析）</option>
+  <option value="Fable-5.1">Claude Fable 5.1（最高階/高敏感度）</option>
 </select>
   </div>
   <div id="messages"></div>
@@ -141,11 +142,12 @@ function touchConversation(id) {
 }
 
 function newConversation() {
-  const defaultModel = document.getElementById('modelSelect').value || 'google/gemini-2.5-flash:free';
+  const defaultModel = document.getElementById('modelSelect').value || 'auto';
   const conv = {
     id: Date.now().toString(),
     title: '新對話',
     model: defaultModel,
+    historySummary: '', // 由 Worker 端 DeepSeek 產生的滾動摘要，每次回應後更新
     messages: []
   };
   conversations.unshift(conv);
@@ -314,7 +316,8 @@ function buildMessageEl(m, conv) {
     modelTag.style.opacity = '0.8';
     // 簡化顯示模型簡稱
     const shortModel = m.usedModel.split('/')[1] || m.usedModel;
-    modelTag.textContent = `• 🤖 ${shortModel}`;
+    const complexityLabel = Number.isFinite(m.complexity) ? `（評分 ${m.complexity}）` : '';
+    modelTag.textContent = `• 🤖 ${shortModel}${complexityLabel}`;
     meta.appendChild(modelTag);
   }
 
@@ -345,7 +348,7 @@ function renderMessages() {
   box.innerHTML = '';
   const conv = getActiveConv();
   if (!conv) return;
-  document.getElementById('modelSelect').value = conv.model || 'google/gemini-2.5-flash:free';
+  document.getElementById('modelSelect').value = conv.model || 'auto';
   conv.messages.forEach(m => box.appendChild(buildMessageEl(m, conv)));
   box.scrollTop = box.scrollHeight;
 }
@@ -423,14 +426,9 @@ async function sendMessage(overrideText) {
   const lastContentEl = box.lastElementChild.querySelector('.msgContent');
   lastContentEl.textContent = '思考中...';
 
-  // 💡 組裝對話歷史紀錄發給 OpenRouter
-  const historyPayload = conv.messages
-    .filter(m => m.role === 'user' || m.role === 'bot')
-    .slice(0, -1) // 扣掉剛剛 push 的空白 botMsg
-    .map(m => ({
-      role: m.role === 'bot' ? 'assistant' : 'user',
-      content: m.text
-    }));
+  // 💡 取得目前為止最後一則機器人回覆（第一輪對話則為空字串），供 Worker 端做上下文比對
+  const priorBotMessages = conv.messages.filter(m => m.role === 'bot' && m !== botMsg);
+  const lastAiResponse = priorBotMessages.length > 0 ? priorBotMessages[priorBotMessages.length - 1].text : '';
 
   try {
     const res = await fetch(WORKER_URL, {
@@ -440,7 +438,9 @@ async function sendMessage(overrideText) {
         'X-App-Auth': NAME
       },
       body: JSON.stringify({
-        messages: historyPayload,
+        query: text,
+        historySummary: conv.historySummary || '',
+        lastAiResponse: lastAiResponse,
         model: conv.model
       })
     });
@@ -449,7 +449,9 @@ async function sendMessage(overrideText) {
     if (data.answer) {
       botMsg.text = data.answer;
       botMsg.usedModel = data.usedModel || conv.model;
-      
+      botMsg.complexity = data.complexity;
+      conv.historySummary = data.historySummary || conv.historySummary || ''; // 更新滾動摘要，下一輪對話會用到
+
       typewriterInto(lastContentEl, data.answer, () => {
         renderMarkdownAndFeatures(lastContentEl, data.answer);
         saveConversations();
