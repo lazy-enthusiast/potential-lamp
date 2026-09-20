@@ -78,6 +78,13 @@
   #inputBar { display: flex; padding: 16px; border-top: 1px solid var(--border); gap: 8px; }
   #inputBox { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid var(--input-border); background: var(--bg); color: var(--text); font-size: 14px; resize: none; max-height: 160px; overflow-y: auto; font-family: inherit; }
   #sendBtn { padding: 0 20px; border: none; border-radius: 8px; background: var(--accent); color: white; cursor: pointer; }
+
+  /* 除錯區塊：DeepSeek 摘要/評分原始輸出 */
+  .debugBlock { margin-top: 6px; max-width: 100%; font-size: 12px; }
+  .debugBlock summary { cursor: pointer; color: var(--text-light); user-select: none; }
+  .debugBlock summary:hover { color: var(--text); }
+  .debugBlock pre { margin: 6px 0 0; padding: 10px; background: var(--code-bg); color: #abb2bf; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-family: 'Fira Code', Consolas, Monaco, monospace; }
+  .debugTag { margin-top: 4px; color: var(--text-light); }
 </style>
 </head>
 <body>
@@ -340,6 +347,35 @@ function buildMessageEl(m, conv) {
   }
 
   wrap.appendChild(meta);
+
+  // 🔍 除錯區塊：顯示 DeepSeek v4 flash 這一步（摘要+複雜度評分）的原始輸出，可展開查看
+  if (m.summarizerRaw) {
+    const details = document.createElement('details');
+    details.className = 'debugBlock';
+
+    const summary = document.createElement('summary');
+    summary.textContent = '🔍 查看摘要／評分過程';
+    details.appendChild(summary);
+
+    const pre = document.createElement('pre');
+    let displayText = m.summarizerRaw;
+    // 若原始輸出本身是合法 JSON，先美化排版方便閱讀；解析失敗就直接顯示原始字串
+    try {
+      displayText = JSON.stringify(JSON.parse(m.summarizerRaw), null, 2);
+    } catch (e) { /* 非合法 JSON，保留原始文字，這本身就是值得你注意的訊號 */ }
+    pre.textContent = displayText;
+    details.appendChild(pre);
+
+    if (m.taskTag) {
+      const tagLine = document.createElement('div');
+      tagLine.className = 'debugTag';
+      tagLine.textContent = `task_tag: ${m.taskTag}`;
+      details.appendChild(tagLine);
+    }
+
+    wrap.appendChild(details);
+  }
+
   return wrap;
 }
 
@@ -450,6 +486,8 @@ async function sendMessage(overrideText) {
       botMsg.text = data.answer;
       botMsg.usedModel = data.usedModel || conv.model;
       botMsg.complexity = data.complexity;
+      botMsg.taskTag = data.taskTag;
+      botMsg.summarizerRaw = data.summarizerRaw;
       conv.historySummary = data.historySummary || conv.historySummary || ''; // 更新滾動摘要，下一輪對話會用到
 
       typewriterInto(lastContentEl, data.answer, () => {
