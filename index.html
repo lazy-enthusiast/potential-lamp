@@ -101,13 +101,13 @@
 <div id="main">
   <div id="topbar">
     <label for="modelSelect">AI Model：</label>
-<select id="modelSelect" onchange="changeModel()">
-  <option value="auto" selected>自動（依複雜度智能分流）</option>
-  <option value="Haiku-4.5">Claude Haiku 4.5（快速/簡單任務）</option>
-  <option value="Sonnet-5">Claude Sonnet 5（標準任務）</option>
-  <option value="Opus-5">Claude Opus 5（進階分析）</option>
-  <option value="Fable-5.1">Claude Fable 5.1（最高階/高敏感度）</option>
-</select>
+    <select id="modelSelect" onchange="changeModel()">
+      <option value="auto" selected>自動（依複雜度智能分流）</option>
+      <option value="Haiku-4.5">Claude Haiku 4.5（快速/簡單任務）</option>
+      <option value="Sonnet-5">Claude Sonnet 5（標準任務）</option>
+      <option value="Opus-5">Claude Opus 5（進階分析）</option>
+      <option value="Fable-5.1">Claude Fable 5.1（最高階/高敏感度）</option>
+    </select>
   </div>
   <div id="messages"></div>
   <div id="inputBar">
@@ -348,7 +348,7 @@ function buildMessageEl(m, conv) {
 
   wrap.appendChild(meta);
 
-  // 🔍 除錯區塊：顯示 DeepSeek v4 flash 這一步（摘要+複雜度評分）的原始輸出，可展開查看
+  // 🔍 除錯區塊：顯示 DeepSeek 摘要+複雜度評分的原始輸出
   if (m.summarizerRaw) {
     const details = document.createElement('details');
     details.className = 'debugBlock';
@@ -359,10 +359,9 @@ function buildMessageEl(m, conv) {
 
     const pre = document.createElement('pre');
     let displayText = m.summarizerRaw;
-    // 若原始輸出本身是合法 JSON，先美化排版方便閱讀；解析失敗就直接顯示原始字串
     try {
       displayText = JSON.stringify(JSON.parse(m.summarizerRaw), null, 2);
-    } catch (e) { /* 非合法 JSON，保留原始文字，這本身就是值得你注意的訊號 */ }
+    } catch (e) { /* 非合法 JSON，保留原始文字 */ }
     pre.textContent = displayText;
     details.appendChild(pre);
 
@@ -387,24 +386,6 @@ function renderMessages() {
   document.getElementById('modelSelect').value = conv.model || 'auto';
   conv.messages.forEach(m => box.appendChild(buildMessageEl(m, conv)));
   box.scrollTop = box.scrollHeight;
-}
-
-function typewriterInto(contentEl, fullText, onDone) {
-  const box = document.getElementById('messages');
-  const stepsCount = Math.max(20, Math.min(fullText.length, 100));
-  const chunkSize = Math.ceil(fullText.length / stepsCount);
-  const intervalMs = 600 / stepsCount;
-  let i = 0;
-  contentEl.textContent = '';
-  const timer = setInterval(() => {
-    i += chunkSize;
-    contentEl.textContent = fullText.slice(0, i);
-    box.scrollTop = box.scrollHeight;
-    if (i >= fullText.length) {
-      clearInterval(timer);
-      onDone();
-    }
-  }, intervalMs);
 }
 
 // 💡 自動生成標題 request
@@ -459,10 +440,11 @@ async function sendMessage(overrideText) {
   conv.messages.push(botMsg);
   renderMessages();
   const box = document.getElementById('messages');
-  const lastContentEl = box.lastElementChild.querySelector('.msgContent');
+  const lastMsgWrap = box.lastElementChild;
+  const lastContentEl = lastMsgWrap.querySelector('.msgContent');
   lastContentEl.textContent = '思考中...';
 
-  // 💡 取得目前為止最後一則機器人回覆（第一輪對話則為空字串），供 Worker 端做上下文比對
+  // 💡 取得最後一則機器人回覆
   const priorBotMessages = conv.messages.filter(m => m.role === 'bot' && m !== botMsg);
   const lastAiResponse = priorBotMessages.length > 0 ? priorBotMessages[priorBotMessages.length - 1].text : '';
 
@@ -480,31 +462,73 @@ async function sendMessage(overrideText) {
         model: conv.model
       })
     });
-    const data = await res.json();
 
-    if (data.answer) {
-      botMsg.text = data.answer;
-      botMsg.usedModel = data.usedModel || conv.model;
-      botMsg.complexity = data.complexity;
-      botMsg.taskTag = data.taskTag;
-      botMsg.summarizerRaw = data.summarizerRaw;
-      conv.historySummary = data.historySummary || conv.historySummary || ''; // 更新滾動摘要，下一輪對話會用到
-
-      typewriterInto(lastContentEl, data.answer, () => {
-        renderMarkdownAndFeatures(lastContentEl, data.answer);
-        saveConversations();
-        renderMessages();
-
-        if (isFirstMessage) {
-          fetchAutoTitle(conv, text, data.answer);
-        }
-      });
-    } else {
-      const errMsg = data.error || JSON.stringify(data);
-      conv.messages[conv.messages.length - 1] = { role: 'error', text: '發生錯誤：' + errMsg, time: Date.now() };
-      saveConversations();
-      renderMessages();
+    if (!res.ok) {
+      let errText = '請求失敗';
+      try {
+        const errJson = await res.json();
+        errText = errJson.error || errText;
+      } catch (e) {}
+      throw new Error(errText);
     }
+
+    // 1. 從 Worker Header 中讀取轉發的中樞 metadata
+    botMsg.usedModel = res.headers.get('X-Used-Model') || conv.model;
+    const compHeader = res.headers.get('X-Complexity');
+    botMsg.complexity = compHeader ? parseFloat(compHeader) : undefined;
+    botMsg.taskTag = decodeURIComponent(res.headers.get('X-Task-Tag') || '');
+    botMsg.summarizerRaw = decodeURIComponent(res.headers.get('X-Summarizer-Raw') || '');
+    
+    const newSummary = decodeURIComponent(res.headers.get('X-History-Summary') || '');
+    if (newSummary) conv.historySummary = newSummary;
+
+    // 2. 準備讀取 SSE 串流
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let accumulatedText = '';
+    let isFirstChunk = true;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value, { stream: true });
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('data: ') && trimmed !== 'data: [DONE]') {
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+            // 相容 OpenAI/Claude API chunk 結構
+            const token = json.choices?.[0]?.delta?.content || json.delta?.text || '';
+            if (token) {
+              if (isFirstChunk) {
+                lastContentEl.textContent = ''; // 收到第一個字時清空「思考中...」
+                isFirstChunk = false;
+              }
+              accumulatedText += token;
+              botMsg.text = accumulatedText;
+              
+              // 即時更新 Markdown / 文字內容
+              renderMarkdownAndFeatures(lastContentEl, accumulatedText);
+              box.scrollTop = box.scrollHeight;
+            }
+          } catch (e) {
+            // 忽略未完全湊齊的單列 JSON 片段
+          }
+        }
+      }
+    }
+
+    // 3. 串流接收完成後，更新 UI 元數據與紀錄
+    renderMessages();
+    saveConversations();
+
+    if (isFirstMessage && accumulatedText) {
+      fetchAutoTitle(conv, text, accumulatedText);
+    }
+
   } catch (err) {
     conv.messages[conv.messages.length - 1] = { role: 'error', text: '連線失敗：' + err.message, time: Date.now() };
     saveConversations();
