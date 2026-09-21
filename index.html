@@ -388,31 +388,31 @@ function renderMessages() {
   box.scrollTop = box.scrollHeight;
 }
 
-// 💡 自動生成標題 request
 async function fetchAutoTitle(conv, userQuery, aiAnswer) {
   try {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-App-Auth': NAME
-      },
-      body: JSON.stringify({
-        action: 'generateTitle',
-        query: userQuery,
-        lastAiResponse: aiAnswer
-      })
+      headers: { 'Content-Type': 'application/json', 'X-App-Auth': NAME },
+      body: JSON.stringify({ action: 'generateTitle', query: userQuery, lastAiResponse: aiAnswer })
     });
     const data = await res.json();
+    if (!res.ok) {
+      console.error(`❌ 標題生成失敗 (HTTP ${res.status})：`, data.error || data);
+      return;
+    }
     if (data.title) {
-      conv.title = data.title.replace(/["']/g, ''); // 移除引號
+      conv.title = data.title.replace(/["']/g, '');
       saveConversations();
       renderSidebar();
+    } else {
+      console.warn('⚠️ Worker 回應成功但沒有 title 欄位：', data);
     }
   } catch (e) {
-    console.error('❌ 標題生成失敗:', e);
+    console.error('❌ 標題生成請求失敗（網路層）:', e);
   }
 }
+ 
+// 💡 自動生成標題 request
 
 const inputBox = document.getElementById('inputBox');
 inputBox.addEventListener('input', () => {
