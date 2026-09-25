@@ -75,9 +75,16 @@
   .msgMeta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 11px; color: var(--text-light); }
   .msgMeta button { border: none; background: none; cursor: pointer; color: var(--text-light); font-size: 12px; padding: 2px 4px; border-radius: 4px; }
   .msgMeta button:hover { background: var(--hover); color: var(--text); }
-  #inputBar { display: flex; padding: 16px; border-top: 1px solid var(--border); gap: 8px; }
+  #inputBar { display: flex; padding: 16px; border-top: 1px solid var(--border); gap: 8px; align-items: flex-end; }
   #inputBox { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid var(--input-border); background: var(--bg); color: var(--text); font-size: 14px; resize: none; max-height: 160px; overflow-y: auto; font-family: inherit; }
-  #sendBtn { padding: 0 20px; border: none; border-radius: 8px; background: var(--accent); color: white; cursor: pointer; }
+  #sendBtn { padding: 0 20px; border: none; border-radius: 8px; background: var(--accent); color: white; cursor: pointer; height: 40px; }
+  #attachBtn { border: none; background: none; cursor: pointer; font-size: 18px; color: var(--text-light); height: 40px; width: 36px; border-radius: 8px; }
+  #attachBtn:hover { background: var(--hover); color: var(--text); }
+  #attachPreview { padding: 8px 16px 0; }
+  .attachChip { display: inline-flex; align-items: center; gap: 6px; background: var(--hover); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text-light); }
+  .attachChip button { border: none; background: none; cursor: pointer; color: var(--text-light); font-size: 14px; padding: 0; line-height: 1; }
+  .attachChip button:hover { color: var(--text); }
+  .msgAttachChip { display: inline-flex; align-items: center; gap: 4px; background: var(--hover); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--text-light); margin-top: 4px; }
 
   /* 除錯區塊：DeepSeek 摘要/評分原始輸出 */
   .debugBlock { margin-top: 6px; max-width: 100%; font-size: 12px; }
@@ -110,7 +117,10 @@
     </select>
   </div>
   <div id="messages"></div>
+  <div id="attachPreview" style="display:none;"></div>
   <div id="inputBar">
+    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,application/pdf" style="display:none;" onchange="handleFileSelect(event)">
+    <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="附加檔案（圖片/PDF）">📎</button>
     <textarea id="inputBox" rows="1" placeholder="輸入你的問題... (Shift+Enter 換行)"></textarea>
     <button id="sendBtn" onclick="sendMessage()">送出</button>
   </div>
@@ -311,6 +321,13 @@ function buildMessageEl(m, conv) {
   }
   wrap.appendChild(content);
 
+  if (m.role === 'user' && m.attachmentName) {
+    const attachChip = document.createElement('div');
+    attachChip.className = 'msgAttachChip';
+    attachChip.textContent = `📎 ${m.attachmentName}`;
+    wrap.appendChild(attachChip);
+  }
+
   const meta = document.createElement('div');
   meta.className = 'msgMeta';
 
@@ -420,6 +437,66 @@ inputBox.addEventListener('input', () => {
   inputBox.style.height = Math.min(inputBox.scrollHeight, 160) + 'px';
 });
 
+// ===== 附件（圖片/PDF）處理 =====
+let pendingAttachment = null; // { filename, mimeType, dataUrl }
+const ALLOWED_ATTACHMENT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // 15MB，跟 worker.js 的防呆門檻一致
+
+function handleFileSelect(event) {
+  const file = event.target.files[0];
+  event.target.value = ''; // 清空，允許重複選同一個檔案也會觸發 change
+
+  if (!file) return;
+
+  if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
+    alert('目前只支援 PNG／JPEG／WEBP 圖片，或 PDF 檔案。');
+    return;
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    alert('檔案過大，請上傳 15MB 以內的檔案。');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    pendingAttachment = { filename: file.name, mimeType: file.type, dataUrl: reader.result };
+    renderAttachPreview();
+  };
+  reader.onerror = () => alert('讀取檔案失敗，請重試。');
+  reader.readAsDataURL(file);
+}
+
+function removeAttachment() {
+  pendingAttachment = null;
+  renderAttachPreview();
+}
+
+function renderAttachPreview() {
+  const box = document.getElementById('attachPreview');
+  box.innerHTML = '';
+  if (!pendingAttachment) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'block';
+
+  const chip = document.createElement('span');
+  chip.className = 'attachChip';
+
+  const icon = pendingAttachment.mimeType === 'application/pdf' ? '📄' : '🖼️';
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = `${icon} ${pendingAttachment.filename}`;
+  chip.appendChild(nameSpan);
+
+  const removeBtn = document.createElement('button');
+  removeBtn.textContent = '✕';
+  removeBtn.title = '移除附件';
+  removeBtn.onclick = removeAttachment;
+  chip.appendChild(removeBtn);
+
+  box.appendChild(chip);
+}
+
 async function sendMessage(overrideText) {
   const text = (overrideText !== undefined ? overrideText : inputBox.value.trim());
   if (!text) return;
@@ -428,8 +505,18 @@ async function sendMessage(overrideText) {
 
   const isFirstMessage = conv.messages.length === 0;
 
+  // 取出待送出的附件，並立即清空預覽區
+  const attachmentToSend = pendingAttachment;
+  pendingAttachment = null;
+  renderAttachPreview();
+
   conv.lastQuery = text;
-  conv.messages.push({ role: 'user', text, time: Date.now() });
+  conv.messages.push({
+    role: 'user',
+    text,
+    time: Date.now(),
+    attachmentName: attachmentToSend ? attachmentToSend.filename : undefined
+  });
   if (isFirstMessage) conv.title = text.slice(0, 15) + '...';
   if (overrideText === undefined) { inputBox.value = ''; inputBox.style.height = 'auto'; }
   touchConversation(conv.id);
@@ -459,7 +546,8 @@ async function sendMessage(overrideText) {
         query: text,
         historySummary: conv.historySummary || '',
         lastAiResponse: lastAiResponse,
-        model: conv.model
+        model: conv.model,
+        attachment: attachmentToSend || undefined
       })
     });
 
