@@ -9,6 +9,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
 
+<!-- 文件解析：Mammoth.js 讀 .docx，SheetJS 讀 .xlsx -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+
 <!-- Highlight.js 語法高亮 -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -119,8 +123,8 @@
   <div id="messages"></div>
   <div id="attachPreview" style="display:none;"></div>
   <div id="inputBar">
-    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,application/pdf" style="display:none;" onchange="handleFileSelect(event)">
-    <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="附加檔案（圖片/PDF）">📎</button>
+    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,application/pdf,.docx,.xlsx,.txt" style="display:none;" onchange="handleFileSelect(event)">
+    <button id="attachBtn" onclick="document.getElementById('fileInput').click()" title="附加檔案（圖片/PDF/Word/Excel/文字檔）">📎</button>
     <textarea id="inputBox" rows="1" placeholder="輸入你的問題... (Shift+Enter 換行)"></textarea>
     <button id="sendBtn" onclick="sendMessage()">送出</button>
   </div>
@@ -437,19 +441,67 @@ inputBox.addEventListener('input', () => {
   inputBox.style.height = Math.min(inputBox.scrollHeight, 160) + 'px';
 });
 
-// ===== 附件（圖片/PDF）處理 =====
-let pendingAttachment = null; // { filename, mimeType, dataUrl }
-const ALLOWED_ATTACHMENT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+// ===== 附件處理 =====
+// binary 模式（圖片/PDF）：{ kind:'binary', filename, mimeType, dataUrl } —— 送給 worker.js 走 OpenRouter 多模態
+// text 模式（docx/xlsx/txt）：{ kind:'text', filename, extractedText } —— 直接併入提問文字，worker.js 不需改動
+let pendingAttachment = null;
 const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // 15MB，跟 worker.js 的防呆門檻一致
+const MAX_EXTRACTED_CHARS = 40000; // 抽取出的文字上限，避免過長文件把上下文塞爆
 
-function handleFileSelect(event) {
+const BINARY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.pdf'];
+const TEXT_EXTENSIONS = ['.docx', '.xlsx', '.txt'];
+
+function getExt(filename) {
+  const idx = filename.lastIndexOf('.');
+  return idx === -1 ? '' : filename.slice(idx).toLowerCase();
+}
+
+function mimeTypeForExt(ext) {
+  return {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp', '.pdf': 'application/pdf'
+  }[ext] || 'application/octet-stream';
+}
+
+function capExtractedText(str) {
+  if (str.length > MAX_EXTRACTED_CHARS) {
+    return str.slice(0, MAX_EXTRACTED_CHARS) + '\n\n...(內容過長，已截斷)';
+  }
+  return str;
+}
+
+// 從 .docx / .xlsx / .txt 抽取純文字內容
+async function extractTextFromFile(file, ext) {
+  if (ext === '.txt') {
+    return await file.text();
+  }
+  if (ext === '.docx') {
+    const arrayBuffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer });
+    return result.value;
+  }
+  if (ext === '.xlsx') {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    let text = '';
+    workbook.SheetNames.forEach(sheetName => {
+      const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+      text += `【工作表：${sheetName}】\n${csv}\n\n`;
+    });
+    return text;
+  }
+  return '';
+}
+
+async function handleFileSelect(event) {
   const file = event.target.files[0];
   event.target.value = ''; // 清空，允許重複選同一個檔案也會觸發 change
-
   if (!file) return;
 
-  if (!ALLOWED_ATTACHMENT_TYPES.includes(file.type)) {
-    alert('目前只支援 PNG／JPEG／WEBP 圖片，或 PDF 檔案。');
+  const ext = getExt(file.name);
+
+  if (![...BINARY_EXTENSIONS, ...TEXT_EXTENSIONS].includes(ext)) {
+    alert('目前支援 PNG／JPEG／WEBP／PDF／Word (.docx)／Excel (.xlsx)／純文字 (.txt)。');
     return;
   }
   if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -457,9 +509,22 @@ function handleFileSelect(event) {
     return;
   }
 
+  if (TEXT_EXTENSIONS.includes(ext)) {
+    try {
+      const rawText = await extractTextFromFile(file, ext);
+      pendingAttachment = { kind: 'text', filename: file.name, extractedText: capExtractedText(rawText) };
+      renderAttachPreview();
+    } catch (err) {
+      console.error('檔案解析失敗:', err);
+      alert(`讀取「${file.name}」內容失敗，檔案可能已損毀或格式不支援。`);
+    }
+    return;
+  }
+
+  // binary 模式（圖片/PDF）：讀成 base64
   const reader = new FileReader();
   reader.onload = () => {
-    pendingAttachment = { filename: file.name, mimeType: file.type, dataUrl: reader.result };
+    pendingAttachment = { kind: 'binary', filename: file.name, mimeType: file.type || mimeTypeForExt(ext), dataUrl: reader.result };
     renderAttachPreview();
   };
   reader.onerror = () => alert('讀取檔案失敗，請重試。');
@@ -483,7 +548,10 @@ function renderAttachPreview() {
   const chip = document.createElement('span');
   chip.className = 'attachChip';
 
-  const icon = pendingAttachment.mimeType === 'application/pdf' ? '📄' : '🖼️';
+  const icons = { '.pdf': '📄', '.docx': '📝', '.xlsx': '📊', '.txt': '📃' };
+  const ext = getExt(pendingAttachment.filename);
+  const icon = pendingAttachment.kind === 'binary' && pendingAttachment.mimeType !== 'application/pdf' ? '🖼️' : (icons[ext] || '📎');
+
   const nameSpan = document.createElement('span');
   nameSpan.textContent = `${icon} ${pendingAttachment.filename}`;
   chip.appendChild(nameSpan);
@@ -535,6 +603,12 @@ async function sendMessage(overrideText) {
   const priorBotMessages = conv.messages.filter(m => m.role === 'bot' && m !== botMsg);
   const lastAiResponse = priorBotMessages.length > 0 ? priorBotMessages[priorBotMessages.length - 1].text : '';
 
+  // text 模式（docx/xlsx/txt）：把抽取出的文字併入實際送出的 query；binary 模式（圖片/PDF）：走 attachment 欄位
+  const queryToSend = attachmentToSend?.kind === 'text'
+    ? `${text}\n\n【附加檔案：${attachmentToSend.filename}】\n${attachmentToSend.extractedText}`
+    : text;
+  const attachmentForRequest = attachmentToSend?.kind === 'binary' ? attachmentToSend : undefined;
+
   try {
     const res = await fetch(WORKER_URL, {
       method: 'POST',
@@ -543,11 +617,11 @@ async function sendMessage(overrideText) {
         'X-App-Auth': NAME
       },
       body: JSON.stringify({
-        query: text,
+        query: queryToSend,
         historySummary: conv.historySummary || '',
         lastAiResponse: lastAiResponse,
         model: conv.model,
-        attachment: attachmentToSend || undefined
+        attachment: attachmentForRequest
       })
     });
 
