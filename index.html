@@ -5,19 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Claude Chatbot</title>
 
-<!-- 第三方套件：marked & purify -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
-
-<!-- 文件解析：Mammoth.js 讀 .docx，SheetJS 讀 .xlsx -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.4.2/mammoth.browser.min.js"></script>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-
-<!-- Highlight.js 語法高亮 -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-
-<!-- KaTeX 數學公式渲染 -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
@@ -53,7 +46,7 @@
   .menu div { padding: 8px 16px; font-size: 13px; cursor: pointer; white-space: nowrap; color: var(--text); }
   .menu div:hover { background: var(--hover); }
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  #topbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  #topbar { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; position: relative; }
   #topbar label { font-size: 13px; color: var(--text-light); }
   #modelSelect { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--input-border); background: var(--bg); color: var(--text); font-size: 13px; }
   #messages { flex: 1; overflow-y: auto; padding: 24px; }
@@ -67,15 +60,12 @@
   .msgContent p { margin: 0 0 8px; }
   .msgContent p:last-child { margin-bottom: 0; }
   .msgContent ul, .msgContent ol { margin: 4px 0 8px 20px; }
-
-  /* 程式碼區塊高亮與按鈕樣式 */
   .codeBlockContainer { position: relative; margin: 8px 0; border-radius: 6px; overflow: hidden; background: var(--code-bg); }
   .codeBlockHeader { display: flex; justify-content: space-between; align-items: center; background: rgba(0,0,0,0.3); padding: 4px 12px; font-size: 12px; color: #abb2bf; font-family: monospace; }
   .codeCopyBtn { border: none; background: transparent; color: #abb2bf; cursor: pointer; font-size: 12px; padding: 2px 6px; border-radius: 4px; }
   .codeCopyBtn:hover { background: rgba(255,255,255,0.1); color: #fff; }
   .msgContent pre { margin: 0; padding: 12px; overflow-x: auto; background: var(--code-bg); }
   .msgContent code { font-family: 'Fira Code', Consolas, Monaco, monospace; font-size: 13px; }
-
   .msgMeta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 11px; color: var(--text-light); }
   .msgMeta button { border: none; background: none; cursor: pointer; color: var(--text-light); font-size: 12px; padding: 2px 4px; border-radius: 4px; }
   .msgMeta button:hover { background: var(--hover); color: var(--text); }
@@ -89,8 +79,6 @@
   .attachChip button { border: none; background: none; cursor: pointer; color: var(--text-light); font-size: 14px; padding: 0; line-height: 1; }
   .attachChip button:hover { color: var(--text); }
   .msgAttachChip { display: inline-flex; align-items: center; gap: 4px; background: var(--hover); border-radius: 6px; padding: 2px 8px; font-size: 11px; color: var(--text-light); margin-top: 4px; }
-
-  /* 除錯區塊：DeepSeek 摘要/評分原始輸出 */
   .debugBlock { margin-top: 6px; max-width: 100%; font-size: 12px; }
   .debugBlock summary { cursor: pointer; color: var(--text-light); user-select: none; }
   .debugBlock summary:hover { color: var(--text); }
@@ -115,9 +103,7 @@
     <select id="modelSelect" onchange="changeModel()">
       <option value="auto" selected>自動（依複雜度智能分流）</option>
       <option value="Haiku-4.5">Claude Haiku 4.5（快速/簡單任務）</option>
-      <option value="Sonnet-5">Claude Sonnet 5（標準任務）</option>
-      <option value="Opus-5">Claude Opus 5（進階分析）</option>
-      <option value="Fable-5.1">Claude Fable 5.1（最高階/高敏感度）</option>
+      <option value="Sonnet-5">Claude Sonnet 5（標準/複雜任務）</option>
     </select>
   </div>
   <div id="messages"></div>
@@ -131,11 +117,21 @@
 </div>
 
 <script>
-// ⚠️ 替換為你的 Cloudflare Worker 部署網址
+
 const WORKER_URL = 'https://potential-lamp.davchan-clp.workers.dev';
-const NAME = 'superfancyriceballs';
+const NAME = '貼上你的新暗號';
+
+const MODEL_NAMES = {
+  'Haiku-4.5': 'Claude Haiku 4.5',
+  'Sonnet-5': 'Claude Sonnet 5'
+};
 
 let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+conversations = conversations.filter(c => c && typeof c === 'object' && c.id && Array.isArray(c.messages));
+conversations.forEach(c => {
+  c.lastAttachment = undefined;
+  c.lastAiResponse = '';
+});
 let activeId = null;
 let openMenuId = null;
 
@@ -147,7 +143,15 @@ function toggleTheme() {
 }
 
 function saveConversations() {
-  localStorage.setItem('conversations', JSON.stringify(conversations));
+  const toSave = conversations.map(c => {
+    const { lastAttachment, lastAiResponse, ...rest } = c;
+    return rest;
+  });
+  try {
+    localStorage.setItem('conversations', JSON.stringify(toSave));
+  } catch (e) {
+    console.error('儲存對話失敗:', e);
+  }
 }
 
 function getActiveConv() {
@@ -168,7 +172,7 @@ function newConversation() {
     id: Date.now().toString(),
     title: '新對話',
     model: defaultModel,
-    historySummary: '', // 由 Worker 端 DeepSeek 產生的滾動摘要，每次回應後更新
+    historySummary: '',
     messages: []
   };
   conversations.unshift(conv);
@@ -253,13 +257,11 @@ function formatTime(ts) {
   return d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' });
 }
 
-// 💡 渲染 Markdown + KaTeX + Highlight.js
 function renderMarkdownAndFeatures(container, text) {
   const rawHtml = marked.parse(text);
   const cleanHtml = DOMPurify.sanitize(rawHtml);
   container.innerHTML = cleanHtml;
 
-  // 1. KaTeX 渲染
   if (window.renderMathInElement) {
     renderMathInElement(container, {
       delimiters: [
@@ -272,7 +274,6 @@ function renderMarkdownAndFeatures(container, text) {
     });
   }
 
-  // 2. Highlight.js 高亮與複製
   container.querySelectorAll('pre code').forEach((codeBlock) => {
     hljs.highlightElement(codeBlock);
 
@@ -285,7 +286,7 @@ function renderMarkdownAndFeatures(container, text) {
     const lang = (codeBlock.className.match(/language-(\w+)/) || [])[1] || 'code';
     const header = document.createElement('div');
     header.className = 'codeBlockHeader';
-    header.innerHTML = `<span>${lang}</span>`;
+    header.innerHTML = '<span>' + lang + '</span>';
 
     const copyBtn = document.createElement('button');
     copyBtn.className = 'codeCopyBtn';
@@ -328,7 +329,7 @@ function buildMessageEl(m, conv) {
   if (m.role === 'user' && m.attachmentName) {
     const attachChip = document.createElement('div');
     attachChip.className = 'msgAttachChip';
-    attachChip.textContent = `📎 ${m.attachmentName}`;
+    attachChip.textContent = '📎 ' + m.attachmentName;
     wrap.appendChild(attachChip);
   }
 
@@ -342,10 +343,9 @@ function buildMessageEl(m, conv) {
   if (m.usedModel) {
     const modelTag = document.createElement('span');
     modelTag.style.opacity = '0.8';
-    // 簡化顯示模型簡稱
-    const shortModel = m.usedModel.split('/')[1] || m.usedModel;
+    const shortModel = MODEL_NAMES[m.usedModel] || m.usedModel;
     const complexityLabel = Number.isFinite(m.complexity) ? `（評分 ${m.complexity}）` : '';
-    modelTag.textContent = `• 🤖 ${shortModel}${complexityLabel}`;
+    modelTag.textContent = '• 🤖 ' + shortModel + complexityLabel;
     meta.appendChild(modelTag);
   }
 
@@ -362,14 +362,13 @@ function buildMessageEl(m, conv) {
     retryBtn.onclick = () => {
       wrap.remove();
       conv.messages = conv.messages.filter(x => x !== m);
-      sendMessage(conv.lastQuery);
+      resendLastQuery(conv);
     };
     meta.appendChild(retryBtn);
   }
 
   wrap.appendChild(meta);
 
-  // 🔍 除錯區塊：顯示 DeepSeek 摘要+複雜度評分的原始輸出
   if (m.summarizerRaw) {
     const details = document.createElement('details');
     details.className = 'debugBlock';
@@ -382,14 +381,14 @@ function buildMessageEl(m, conv) {
     let displayText = m.summarizerRaw;
     try {
       displayText = JSON.stringify(JSON.parse(m.summarizerRaw), null, 2);
-    } catch (e) { /* 非合法 JSON，保留原始文字 */ }
+    } catch (e) {}
     pre.textContent = displayText;
     details.appendChild(pre);
 
     if (m.taskTag) {
       const tagLine = document.createElement('div');
       tagLine.className = 'debugTag';
-      tagLine.textContent = `task_tag: ${m.taskTag}`;
+      tagLine.textContent = 'task_tag: ' + m.taskTag;
       details.appendChild(tagLine);
     }
 
@@ -418,22 +417,18 @@ async function fetchAutoTitle(conv, userQuery, aiAnswer) {
     });
     const data = await res.json();
     if (!res.ok) {
-      console.error(`❌ 標題生成失敗 (HTTP ${res.status})：`, data.error || data);
+      console.error('標題生成失敗 (HTTP ' + res.status + ')：', data.error || data);
       return;
     }
     if (data.title) {
       conv.title = data.title.replace(/["']/g, '');
       saveConversations();
       renderSidebar();
-    } else {
-      console.warn('⚠️ Worker 回應成功但沒有 title 欄位：', data);
     }
   } catch (e) {
-    console.error('❌ 標題生成請求失敗（網路層）:', e);
+    console.error('標題生成請求失敗:', e);
   }
 }
- 
-// 💡 自動生成標題 request
 
 const inputBox = document.getElementById('inputBox');
 inputBox.addEventListener('input', () => {
@@ -441,12 +436,9 @@ inputBox.addEventListener('input', () => {
   inputBox.style.height = Math.min(inputBox.scrollHeight, 160) + 'px';
 });
 
-// ===== 附件處理 =====
-// binary 模式（圖片/PDF）：{ kind:'binary', filename, mimeType, dataUrl } —— 送給 worker.js 走 OpenRouter 多模態
-// text 模式（docx/xlsx/txt）：{ kind:'text', filename, extractedText } —— 直接併入提問文字，worker.js 不需改動
 let pendingAttachment = null;
-const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024; // 15MB，跟 worker.js 的防呆門檻一致
-const MAX_EXTRACTED_CHARS = 40000; // 抽取出的文字上限，避免過長文件把上下文塞爆
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+const MAX_EXTRACTED_CHARS = 40000;
 
 const BINARY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.pdf'];
 const TEXT_EXTENSIONS = ['.docx', '.xlsx', '.txt'];
@@ -470,7 +462,6 @@ function capExtractedText(str) {
   return str;
 }
 
-// 從 .docx / .xlsx / .txt 抽取純文字內容
 async function extractTextFromFile(file, ext) {
   if (ext === '.txt') {
     return await file.text();
@@ -486,7 +477,7 @@ async function extractTextFromFile(file, ext) {
     let text = '';
     workbook.SheetNames.forEach(sheetName => {
       const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
-      text += `【工作表：${sheetName}】\n${csv}\n\n`;
+      text += '【工作表：' + sheetName + '】\n' + csv + '\n\n';
     });
     return text;
   }
@@ -495,7 +486,7 @@ async function extractTextFromFile(file, ext) {
 
 async function handleFileSelect(event) {
   const file = event.target.files[0];
-  event.target.value = ''; // 清空，允許重複選同一個檔案也會觸發 change
+  event.target.value = '';
   if (!file) return;
 
   const ext = getExt(file.name);
@@ -516,12 +507,11 @@ async function handleFileSelect(event) {
       renderAttachPreview();
     } catch (err) {
       console.error('檔案解析失敗:', err);
-      alert(`讀取「${file.name}」內容失敗，檔案可能已損毀或格式不支援。`);
+      alert('讀取「' + file.name + '」內容失敗，檔案可能已損毀或格式不支援。');
     }
     return;
   }
 
-  // binary 模式（圖片/PDF）：讀成 base64
   const reader = new FileReader();
   reader.onload = () => {
     pendingAttachment = { kind: 'binary', filename: file.name, mimeType: file.type || mimeTypeForExt(ext), dataUrl: reader.result };
@@ -550,10 +540,10 @@ function renderAttachPreview() {
 
   const icons = { '.pdf': '📄', '.docx': '📝', '.xlsx': '📊', '.txt': '📃' };
   const ext = getExt(pendingAttachment.filename);
-  const icon = pendingAttachment.kind === 'binary' && pendingAttachment.mimeType !== 'application/pdf' ? '🖼️' : (icons[ext] || '📎');
+  const icon = (pendingAttachment.kind === 'binary' && pendingAttachment.mimeType !== 'application/pdf') ? '🖼️' : (icons[ext] || '📎');
 
   const nameSpan = document.createElement('span');
-  nameSpan.textContent = `${icon} ${pendingAttachment.filename}`;
+  nameSpan.textContent = icon + ' ' + pendingAttachment.filename;
   chip.appendChild(nameSpan);
 
   const removeBtn = document.createElement('button');
@@ -565,6 +555,11 @@ function renderAttachPreview() {
   box.appendChild(chip);
 }
 
+async function resendLastQuery(conv) {
+  if (!conv.lastQuery) return;
+  await _doSend(conv, conv.lastQuery, conv.lastAttachment, conv.lastAiResponse, false);
+}
+
 async function sendMessage(overrideText) {
   const text = (overrideText !== undefined ? overrideText : inputBox.value.trim());
   if (!text) return;
@@ -573,12 +568,13 @@ async function sendMessage(overrideText) {
 
   const isFirstMessage = conv.messages.length === 0;
 
-  // 取出待送出的附件，並立即清空預覽區
   const attachmentToSend = pendingAttachment;
   pendingAttachment = null;
   renderAttachPreview();
 
   conv.lastQuery = text;
+  conv.lastAttachment = attachmentToSend;
+
   conv.messages.push({
     role: 'user',
     text,
@@ -591,6 +587,20 @@ async function sendMessage(overrideText) {
   renderSidebar();
   renderMessages();
 
+  let lastAiResponse = '';
+  for (let i = conv.messages.length - 1; i >= 0; i--) {
+    const msg = conv.messages[i];
+    if (msg.role === 'bot' && msg.text) {
+      lastAiResponse = msg.text;
+      break;
+    }
+  }
+  conv.lastAiResponse = lastAiResponse;
+
+  await _doSend(conv, text, attachmentToSend, lastAiResponse, isFirstMessage);
+}
+
+async function _doSend(conv, text, attachmentToSend, lastAiResponse, isFirstMessage) {
   const botMsg = { role: 'bot', text: '', time: Date.now() };
   conv.messages.push(botMsg);
   renderMessages();
@@ -599,15 +609,10 @@ async function sendMessage(overrideText) {
   const lastContentEl = lastMsgWrap.querySelector('.msgContent');
   lastContentEl.textContent = '思考中...';
 
-  // 💡 取得最後一則機器人回覆
-  const priorBotMessages = conv.messages.filter(m => m.role === 'bot' && m !== botMsg);
-  const lastAiResponse = priorBotMessages.length > 0 ? priorBotMessages[priorBotMessages.length - 1].text : '';
-
-  // text 模式（docx/xlsx/txt）：把抽取出的文字併入實際送出的 query；binary 模式（圖片/PDF）：走 attachment 欄位
-  const queryToSend = attachmentToSend?.kind === 'text'
-    ? `${text}\n\n【附加檔案：${attachmentToSend.filename}】\n${attachmentToSend.extractedText}`
+  const queryToSend = (attachmentToSend && attachmentToSend.kind === 'text')
+    ? text + '\n\n【附加檔案：' + attachmentToSend.filename + '】\n' + attachmentToSend.extractedText
     : text;
-  const attachmentForRequest = attachmentToSend?.kind === 'binary' ? attachmentToSend : undefined;
+  const attachmentForRequest = (attachmentToSend && attachmentToSend.kind === 'binary') ? attachmentToSend : undefined;
 
   try {
     const res = await fetch(WORKER_URL, {
@@ -634,56 +639,71 @@ async function sendMessage(overrideText) {
       throw new Error(errText);
     }
 
-    // 1. 從 Worker Header 中讀取轉發的中樞 metadata
-    botMsg.usedModel = res.headers.get('X-Used-Model') || conv.model;
-    const compHeader = res.headers.get('X-Complexity');
-    botMsg.complexity = compHeader ? parseFloat(compHeader) : undefined;
-    botMsg.taskTag = decodeURIComponent(res.headers.get('X-Task-Tag') || '');
-    botMsg.summarizerRaw = decodeURIComponent(res.headers.get('X-Summarizer-Raw') || '');
-    
-    const newSummary = decodeURIComponent(res.headers.get('X-History-Summary') || '');
-    if (newSummary) conv.historySummary = newSummary;
-
-    // 2. 準備讀取 SSE 串流
     const reader = res.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let accumulatedText = '';
     let isFirstChunk = true;
+    let sseBuffer = '';
+
+    let lastRenderTime = 0;
+    const RENDER_INTERVAL = 80;
+    let pendingRender = false;
+
+    function scheduleRender() {
+      if (pendingRender) return;
+      pendingRender = true;
+      requestAnimationFrame(() => {
+        renderMarkdownAndFeatures(lastContentEl, accumulatedText);
+        box.scrollTop = box.scrollHeight;
+        pendingRender = false;
+      });
+    }
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop();
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith('data: ') && trimmed !== 'data: [DONE]') {
-          try {
-            const json = JSON.parse(trimmed.slice(6));
-            // 相容 OpenAI/Claude API chunk 結構
-            const token = json.choices?.[0]?.delta?.content || json.delta?.text || '';
-            if (token) {
-              if (isFirstChunk) {
-                lastContentEl.textContent = ''; // 收到第一個字時清空「思考中...」
-                isFirstChunk = false;
-              }
-              accumulatedText += token;
-              botMsg.text = accumulatedText;
-              
-              // 即時更新 Markdown / 文字內容
-              renderMarkdownAndFeatures(lastContentEl, accumulatedText);
-              box.scrollTop = box.scrollHeight;
-            }
-          } catch (e) {
-            // 忽略未完全湊齊的單列 JSON 片段
+        if (!trimmed.startsWith('data: ')) continue;
+        if (trimmed === 'data: [DONE]') continue;
+
+        try {
+          const json = JSON.parse(trimmed.slice(6));
+
+          if (json.type === 'meta') {
+            if (json.history_summary) conv.historySummary = json.history_summary;
+            botMsg.usedModel = json.used_model || conv.model;
+            botMsg.complexity = json.complexity;
+            botMsg.taskTag = json.task_tag || '';
+            botMsg.summarizerRaw = json.raw_summary || '';
+            continue;
           }
-        }
+
+          const token = (json.choices && json.choices[0] && json.choices[0].delta && json.choices[0].delta.content) || (json.delta && json.delta.text) || '';
+          if (token) {
+            if (isFirstChunk) {
+              lastContentEl.textContent = '';
+              isFirstChunk = false;
+            }
+            accumulatedText += token;
+            botMsg.text = accumulatedText;
+
+            const now = Date.now();
+            if (now - lastRenderTime >= RENDER_INTERVAL) {
+              lastRenderTime = now;
+              scheduleRender();
+            }
+          }
+        } catch (e) {}
       }
     }
 
-    // 3. 串流接收完成後，更新 UI 元數據與紀錄
+    renderMarkdownAndFeatures(lastContentEl, accumulatedText);
     renderMessages();
     saveConversations();
 
@@ -702,8 +722,18 @@ inputBox.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 
-if (conversations.length === 0) newConversation();
-else { activeId = conversations[0].id; renderSidebar(); renderMessages(); }
+if (conversations.length === 0) {
+  newConversation();
+} else {
+  activeId = conversations[0].id;
+  if (!activeId) {
+    newConversation();
+  } else {
+    renderSidebar();
+    renderMessages();
+  }
+}
+
 </script>
 </body>
 </html>
